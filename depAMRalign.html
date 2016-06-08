@@ -1,0 +1,251 @@
+<html>
+<head>
+<style type="text/css">
+  body { font-family: monospace; }
+  #dep_conllu { display: none; }
+  #sent { font-size: 16pt; margin: 0 .5cm; }
+  #main { display: flex; font-size: 16pt; }
+  #dep,#amr,#aligns { white-space: pre; margin: 1cm; }
+  .alignable:hover { background-color: #ff0; cursor: pointer; }
+  .alignable.selectedDep { background-color: #0f0; }
+  .aligned { color: #aaa; }
+  .alignedToMe { color: #0f0; }
+  .depMod { color: #00f; }
+  .depHead { color: #f00; }
+</style>
+<script type="text/javascript" src="jquery-2.2.4.min.js"></script>
+<script type="text/javascript">
+dd = [11, '11 :advcl:if 3', 3, '3 :mark 1', 1, '3 :nsubj 2', 2, '3 :nmod:out 7', 7,
+  '7 :case 4', 4, '7 :det 5', 5, '7 :amod 6', 6, '3 :discourse 8', 8,
+  '11 :nsubj 9', 9, '11 :aux 10', 10, '11 :dobj 12', 12,
+  '!etype', '!derivrole', '!dep-error', '!amr-error', '!??'];
+//depHead = {3: 11, 1: 3, 2: 3, 7: 3, 4: 7, 5: 7, 6: 7, 8: 3, 9: 11, 10: 11, 12: 11};
+aa = ['p', 'p :ARG1 s', 's', 's :ARG0 y', 'y', 'p :condition l', 'l',
+  'l :ARG0 y', 'y#2', 'l :direction o', 'o', 'o :op1 w', 'w', 'w :mod o2', 'o2',
+  '!art', '!case', '!mark', '!support', '!tense', '!redundant', '!dep-error', '!amr-error', '!??'];
+amr = null;
+dep = null;
+ww = null;
+offsets = null;
+aligns = {}; // dep -> AMR
+raligns = {};  // AMR -> dep
+lastClickedAMR = false;
+
+$(function () {
+  // strings
+  amr = $('#amr').text().trim();
+  dep = $('#dep').text().trim();
+  $('#desel').click(function (evt) {
+    $('#dep .selectedDep').removeClass('selectedDep');
+  });
+
+  // decorate
+  offsets = [];
+  ww = [];
+  var k = 1;
+  $('#sent').text().trim().split(/\s+/g).forEach(function (w) {
+    offsets.push(k);
+    ww.push(w);
+    k++;
+  });
+  decorate($('#sent'), offsets, function (e) {
+    e.hover(function (evt) {
+      var dname = $(this).data('unitname');
+      $('.alignable:not(:hover)').each(function() {
+        var aname = $(this).data('unitname');
+        if (dname==aname || isAligned(dname, aname))
+          $(this).toggleClass('alignedToMe', evt.type=="mouseenter");
+      });
+    });
+  });
+
+  decorate($('#dep'), dd, function (e) {
+    e.click(function () {
+      if (lastClickedAMR) {
+        $('#dep .alignable').removeClass('selectedDep');
+        lastClickedAMR = false;
+      }
+      $(this).toggleClass('selectedDep');
+    });
+    e.hover(function (evt) {
+      var dname = $(this).data('unitname');
+      var head = null;
+      var mod = null;
+      if (dname.indexOf && dname.indexOf(':')>-1) {
+        var m = dname.match(/^(\d+) ([:]\S+) (\d+)$/);
+        head = m[1];
+        mod = m[3];
+      }
+      $('.alignable:not(:hover)').each(function() {
+        var name2 = $(this).data('unitname');
+        if (dname==name2 || isAligned(dname, name2))
+          $(this).toggleClass('alignedToMe', evt.type=="mouseenter");
+        if (head!==null && name2==head)
+          $(this).toggleClass('depHead', evt.type=="mouseenter");
+        if (mod!==null & name2==mod)
+          $(this).toggleClass('depMod', evt.type=="mouseenter");
+      });
+    });
+  });
+  decorate($('#amr'), aa, function (e) {
+    e.click(function () {
+      var $a = $(this);
+      var aname = $a.data('unitname');
+      $('.selectedDep').each(function (j) {
+        var dname = $(this).data('unitname');
+        togAlign(dname, aname);
+        $(this).toggleClass('aligned', isAligned(dname,null));
+      });
+      $a.toggleClass('aligned', isAligned(null,aname));
+      printAlign();
+      lastClickedAMR = true;
+    });
+    e.hover(function (evt) {
+      var aname = $(this).data('unitname');
+      $('.alignable:not(:hover)').each(function() {
+        var dname = $(this).data('unitname');
+        if (dname==aname || isAligned(dname, aname))
+          $(this).toggleClass('alignedToMe', evt.type=="mouseenter");
+      });
+    });
+  });
+});
+function decorate(e, unitnames, alignableX) {
+  var PENNMAN_UNIT = /([^\s\(\)]| \/ | [+-])+/g;
+  var t = e.text();
+  var h = $('<div/>');
+  h.attr("id", e.attr("id"));
+  var m;
+  var i = 0;
+  var j = 0;
+  while ((m = PENNMAN_UNIT.exec(t)) !== null) {
+    var g0 = $('<span/>');
+    //console.log(t.substring(i, m.index));
+    g0.text(t.substring(i, m.index));
+    h.append(g0);
+    var g = $('<span class="alignable"></span>');
+    g.data('unitname', unitnames[j]);
+    g.attr("title", unitnames[j]);
+    g.text(m[0]);
+
+    alignableX(g);
+    h.append(g);
+    i = PENNMAN_UNIT.lastIndex;
+    j++;
+  }
+  var g0 = $('<span/>');
+  g0.text(t.substring(i));
+  h.append(g0);
+  e.replaceWith(h);
+}
+function align(d, a) {  /* append a to d's existing alignments, if any.
+if a is null, clear d's alignments. if d is null, clear a's alignments (TODO). */
+  if (a===null) {
+    if (d in aligns) {
+      aligns[d].forEach(function (a2) {
+        // unalign d <- a2
+        a2deps = raligns[a2];
+        a2deps.splice(a2deps.indexOf(d), 1);  // remove d from a2
+      })
+      delete aligns[d];
+    }
+  }
+  else {
+    if (!(d in aligns))
+      aligns[d] = [];
+    if (!(a in raligns))
+      raligns[a] = [];
+    aligns[d].push(a);
+    raligns[a].push(d);
+  }
+}
+function unalign(d, a) {
+  // unalign d -> a2
+  aligns[d].splice(aligns[d].indexOf(a), 1);
+  // unalign d <- a2
+  var adeps = raligns[a];
+  adeps.splice(adeps.indexOf(d), 1);  // remove d from a2
+}
+function togAlign(d, a) {
+  if (isAligned(d, a)) {
+    unalign(d, a);
+  }
+  else {
+    align(d, a);
+  }
+}
+function isAligned(d, a) {
+  /* if either is null, returns whether the other has ANY alignments.
+  else, return whether there is an alignment linking 'd' and 'a'. */
+  if (d===null)
+    return (a in raligns) && raligns[a].length>0;
+  if (d in aligns) {
+    if (a===null) return aligns[d].length>0;
+    return aligns[d].indexOf(a)>-1;
+  }
+  return false;
+}
+function printAlign() {
+  s = "";
+  Object.keys(aligns).forEach(function (d) {
+    s += d + '=' + aligns[d].join('|') + '\n';
+  });
+  $('#aligns').text(s.trim());
+}
+</script>
+</head>
+<body>
+<div id="sent">
+if you look out the other window maybe you ~will see it .
+</div>
+<div id="dep_conllu">
+1	if	if	SCONJ	conj	_	3	mark	_	_
+2	you	you	PRON	pro	_	3	nsubj	_	_
+3	look	look	VERB	v	_	11	advcl	_	_
+4	out	out	ADP	prep	_	7	case	_	_
+5	the	the	DET	art	_	7	det	_	_
+6	other	other	DET	qn	_	7	amod	_	_
+7	window	window	NOUN	n	_	3	nmod	_	_
+8	maybe	maybe	ADV	adv	_	3	discourse	_	_
+9	you	you	PRON	pro	_	11	nsubj	_	_
+10	~will	~will	AUX	mod	_	11	aux	_	_
+11	see	see	VERB	v	_	0	root	_	_
+12	it	it	PRON	pro	_	11	dobj	_	_
+13	.	.	PUNCT	.	_	3	punct	_	_
+</div>
+<div id="main">
+  <div id="dep">
+(11 / see
+      :advcl:if (3 / look
+            :mark (1 / if)
+            :nsubj (2 / you)
+            :nmod:out (7 / window
+                  :case (4 / out)
+                  :det (5 / the)
+                  :amod (6 / other))
+            :discourse (8 / maybe))
+      :nsubj (9 / you)
+      :aux (10 / ~will)
+      :dobj (12 / it))
+
+!etype  !derivrole  
+!dep-error  !amr-error  !??
+  </div>
+  <div id="amr">
+(p / possible-01
+      :ARG1 (s / see-01
+            :ARG0 (y / you))
+      :condition (l / look-01
+            :ARG0 y
+            :direction (o / out
+                  :op1 (w / window
+                        :mod (o2 / other)))))
+
+!art  !case  !mark  !support  !tense  !redundant
+!dep-error  !amr-error  !??
+  </div>
+</div>
+<p><input type="button" id="desel" value="deselect all"/></p>
+<div id="aligns"></div>
+</body>
+</html>
